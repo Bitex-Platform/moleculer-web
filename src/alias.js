@@ -6,17 +6,21 @@
 
 "use strict";
 
-const pathToRegexp 				= require("path-to-regexp");
-const Busboy 					= require("@fastify/busboy");
-const kleur 					= require("kleur");
-const _ 						= require("lodash");
+const pathToRegexp = require("path-to-regexp");
+const Busboy = require("@fastify/busboy");
+const kleur = require("kleur");
+const _ = require("lodash");
 
 const { PayloadTooLarge } = require("./errors");
 const { MoleculerClientError } = require("moleculer").Errors;
-const { removeTrailingSlashes, addSlashes, decodeParam, compose } = require("./utils");
+const {
+	removeTrailingSlashes,
+	addSlashes,
+	decodeParam,
+	compose,
+} = require("./utils");
 
 class Alias {
-
 	/**
 	 * Constructor of Alias
 	 *
@@ -60,12 +64,12 @@ class Alias {
 			this.handler = action;
 			this.action = null;
 		} else if (Array.isArray(action)) {
-			const mws = _.compact(action.map(mw => {
-				if (_.isString(mw))
-					this.action = mw;
-				else if(_.isFunction(mw))
-					return mw;
-			}));
+			const mws = _.compact(
+				action.map((mw) => {
+					if (_.isString(mw)) this.action = mw;
+					else if (_.isFunction(mw)) return mw;
+				})
+			);
 			this.handler = compose.call(service, ...mws);
 		} else if (action != null) {
 			Object.assign(this, _.cloneDeep(action));
@@ -75,17 +79,26 @@ class Alias {
 
 		this.path = removeTrailingSlashes(this.path);
 
-		this.fullPath = this.fullPath || (addSlashes(this.route.path) + this.path);
+		this.fullPath =
+			this.fullPath || addSlashes(this.route.path) + this.path;
 		if (this.fullPath !== "/" && this.fullPath.endsWith("/")) {
 			this.fullPath = this.fullPath.slice(0, -1);
 		}
 
 		this.keys = [];
-		this.re = pathToRegexp(this.fullPath, this.keys, route.opts.pathToRegexpOptions || {}); // Options: https://github.com/pillarjs/path-to-regexp#usage
+		this.re = pathToRegexp(
+			this.fullPath,
+			this.keys,
+			route.opts.pathToRegexpOptions || {}
+		); // Options: https://github.com/pillarjs/path-to-regexp#usage
 
 		if (this.type == "multipart") {
 			// Handle file upload in multipart form
 			this.handler = this.multipartHandler.bind(this);
+		}
+		if (this.type == "multipartP") {
+			// Handle file upload in multipart form
+			this.handler = this.multipartPHandler.bind(this);
 		}
 	}
 
@@ -134,7 +147,15 @@ class Alias {
 	 *
 	 */
 	toString() {
-		return kleur.magenta(_.padStart(this.method, 6)) + " " + kleur.cyan(this.fullPath) + kleur.grey(" => ") + (this.handler != null && this.type !== "multipart" ? "<Function>" : this.action);
+		return (
+			kleur.magenta(_.padStart(this.method, 6)) +
+			" " +
+			kleur.cyan(this.fullPath) +
+			kleur.grey(" => ") +
+			(this.handler != null && this.type !== "multipart"
+				? "<Function>"
+				: this.action)
+		);
 	}
 
 	/**
@@ -150,28 +171,53 @@ class Alias {
 		let numOfFiles = 0;
 		let hasField = false;
 
-		const busboyOptions = _.defaultsDeep({ headers: req.headers }, this.busboyConfig, this.route.opts.busboyConfig);
+		const busboyOptions = _.defaultsDeep(
+			{ headers: req.headers },
+			this.busboyConfig,
+			this.route.opts.busboyConfig
+		);
 		const busboy = new Busboy(busboyOptions);
 		busboy.on("file", (fieldname, file, filename, encoding, mimetype) => {
 			file.on("limit", () => {
 				// This file reached the file size limit.
 				if (_.isFunction(busboyOptions.onFileSizeLimit)) {
-					busboyOptions.onFileSizeLimit.call(this.service, file, busboy);
+					busboyOptions.onFileSizeLimit.call(
+						this.service,
+						file,
+						busboy
+					);
 				}
-				file.destroy(new PayloadTooLarge({ fieldname, filename, encoding, mimetype }));
+				file.destroy(
+					new PayloadTooLarge({
+						fieldname,
+						filename,
+						encoding,
+						mimetype,
+					})
+				);
 			});
 			numOfFiles++;
-			promises.push(ctx.call(this.action, file, _.defaultsDeep({}, this.route.opts.callOptions, { meta: {
-				fieldname: fieldname,
-				filename: filename,
-				encoding: encoding,
-				mimetype: mimetype,
-				$params: req.$params,
-			} })).catch(err => {
-				file.resume(); // Drain file stream to continue processing form
-				busboy.emit("error", err);
-				return err;
-			}));
+			promises.push(
+				ctx
+					.call(
+						this.action,
+						file,
+						_.defaultsDeep({}, this.route.opts.callOptions, {
+							meta: {
+								fieldname: fieldname,
+								filename: filename,
+								encoding: encoding,
+								mimetype: mimetype,
+								$params: req.$params,
+							},
+						})
+					)
+					.catch((err) => {
+						file.resume(); // Drain file stream to continue processing form
+						busboy.emit("error", err);
+						return err;
+					})
+			);
 		});
 		busboy.on("field", (field, value) => {
 			hasField = true;
@@ -181,35 +227,56 @@ class Alias {
 		busboy.on("finish", async () => {
 			/* istanbul ignore next */
 			if (!busboyOptions.empty && numOfFiles == 0)
-				return this.service.sendError(req, res, new MoleculerClientError("File missing in the request"));
+				return this.service.sendError(
+					req,
+					res,
+					new MoleculerClientError("File missing in the request")
+				);
 
 			// Call the action if no files but multipart fields
 			if (numOfFiles == 0 && hasField) {
-				promises.push(ctx.call(this.action, {}, _.defaultsDeep({}, this.route.opts.callOptions, { meta: {
-					$params: req.$params,
-				} })));
+				promises.push(
+					ctx.call(
+						this.action,
+						{},
+						_.defaultsDeep({}, this.route.opts.callOptions, {
+							meta: {
+								$params: req.$params,
+							},
+						})
+					)
+				);
 			}
 
 			try {
 				let data = await this.service.Promise.all(promises);
-				const fileLimit = busboyOptions.limits && busboyOptions.limits.files != null ? busboyOptions.limits.files : null;
+				const fileLimit =
+					busboyOptions.limits && busboyOptions.limits.files != null
+						? busboyOptions.limits.files
+						: null;
 				if (numOfFiles == 1 && fileLimit == 1) {
 					// Remove the array wrapping
 					data = data[0];
 				}
 				if (this.route.onAfterCall)
-					data = await this.route.onAfterCall.call(this, ctx, this.route, req, res, data);
+					data = await this.route.onAfterCall.call(
+						this,
+						ctx,
+						this.route,
+						req,
+						res,
+						data
+					);
 
 				this.service.sendResponse(req, res, data, {});
-
-			} catch(err) {
+			} catch (err) {
 				/* istanbul ignore next */
 				this.service.sendError(req, res, err);
 			}
 		});
 
 		/* istanbul ignore next */
-		busboy.on("error", err => {
+		busboy.on("error", (err) => {
 			req.unpipe(req.busboy);
 			req.resume();
 			this.service.sendError(req, res, err);
@@ -217,15 +284,190 @@ class Alias {
 
 		// Add limit event handlers
 		if (_.isFunction(busboyOptions.onPartsLimit)) {
-			busboy.on("partsLimit", () => busboyOptions.onPartsLimit.call(this.service, busboy, this, this.service));
+			busboy.on("partsLimit", () =>
+				busboyOptions.onPartsLimit.call(
+					this.service,
+					busboy,
+					this,
+					this.service
+				)
+			);
 		}
 
 		if (_.isFunction(busboyOptions.onFilesLimit)) {
-			busboy.on("filesLimit", () => busboyOptions.onFilesLimit.call(this.service, busboy, this, this.service));
+			busboy.on("filesLimit", () =>
+				busboyOptions.onFilesLimit.call(
+					this.service,
+					busboy,
+					this,
+					this.service
+				)
+			);
 		}
 
 		if (_.isFunction(busboyOptions.onFieldsLimit)) {
-			busboy.on("fieldsLimit", () => busboyOptions.onFieldsLimit.call(this.service, busboy, this, this.service));
+			busboy.on("fieldsLimit", () =>
+				busboyOptions.onFieldsLimit.call(
+					this.service,
+					busboy,
+					this,
+					this.service
+				)
+			);
+		}
+
+		req.pipe(busboy);
+	}
+
+	/**
+	 *
+	 * @param {*} req
+	 * @param {*} res
+	 */
+	multipartPHandler(req, res) {
+		const ctx = req.$ctx;
+		ctx.meta.$multipart = {};
+		const promises = [];
+
+		let numOfFiles = 0;
+		let hasField = false;
+
+		const busboyOptions = _.defaultsDeep(
+			{ headers: req.headers },
+			this.busboyConfig,
+			this.route.opts.busboyConfig
+		);
+		const busboy = new Busboy(busboyOptions);
+		busboy.on("file", (fieldname, file, filename, encoding, mimetype) => {
+			file.on("limit", () => {
+				// This file reached the file size limit.
+				if (_.isFunction(busboyOptions.onFileSizeLimit)) {
+					busboyOptions.onFileSizeLimit.call(
+						this.service,
+						file,
+						busboy
+					);
+				}
+				file.destroy(res.end("500"));
+			});
+			numOfFiles++;
+			promises.push(
+				ctx
+					.call(
+						this.action,
+						file,
+						_.defaultsDeep({}, this.route.opts.callOptions, {
+							meta: {
+								fieldname: fieldname,
+								filename: filename,
+								encoding: encoding,
+								mimetype: mimetype,
+								$params: req.$params,
+							},
+						})
+					)
+					.catch((err) => {
+						file.resume(); // Drain file stream to continue processing form
+						busboy.emit("error", err);
+						return err;
+					})
+			);
+		});
+		busboy.on("field", (field, value) => {
+			hasField = true;
+			ctx.meta.$multipart[field] = value;
+		});
+
+		busboy.on("finish", async () => {
+			/* istanbul ignore next */
+			if (!busboyOptions.empty && numOfFiles == 0)
+				return this.service.sendError(
+					req,
+					res,
+					new MoleculerClientError("File missing in the request")
+				);
+
+			// Call the action if no files but multipart fields
+			if (numOfFiles == 0 && hasField) {
+				promises.push(
+					ctx.call(
+						this.action,
+						{},
+						_.defaultsDeep({}, this.route.opts.callOptions, {
+							meta: {
+								$params: req.$params,
+							},
+						})
+					)
+				);
+			}
+
+			try {
+				let data = await this.service.Promise.all(promises);
+				const fileLimit =
+					busboyOptions.limits && busboyOptions.limits.files != null
+						? busboyOptions.limits.files
+						: null;
+				if (numOfFiles == 1 && fileLimit == 1) {
+					// Remove the array wrapping
+					data = data[0];
+				}
+				if (this.route.onAfterCall)
+					data = await this.route.onAfterCall.call(
+						this,
+						ctx,
+						this.route,
+						req,
+						res,
+						data
+					);
+
+				this.service.sendResponse(req, res, data, {});
+			} catch (err) {
+				/* istanbul ignore next */
+				this.service.sendError(req, res, err);
+			}
+		});
+
+		/* istanbul ignore next */
+		busboy.on("error", (err) => {
+			req.unpipe(req.busboy);
+			req.resume();
+			this.service.sendError(req, res, err);
+		});
+
+		// Add limit event handlers
+		if (_.isFunction(busboyOptions.onPartsLimit)) {
+			busboy.on("partsLimit", () =>
+				busboyOptions.onPartsLimit.call(
+					this.service,
+					busboy,
+					this,
+					this.service
+				)
+			);
+		}
+
+		if (_.isFunction(busboyOptions.onFilesLimit)) {
+			busboy.on("filesLimit", () =>
+				busboyOptions.onFilesLimit.call(
+					this.service,
+					busboy,
+					this,
+					this.service
+				)
+			);
+		}
+
+		if (_.isFunction(busboyOptions.onFieldsLimit)) {
+			busboy.on("fieldsLimit", () =>
+				busboyOptions.onFieldsLimit.call(
+					this.service,
+					busboy,
+					this,
+					this.service
+				)
+			);
 		}
 
 		req.pipe(busboy);
